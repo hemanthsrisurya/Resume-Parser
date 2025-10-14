@@ -11,3 +11,5 @@ faiss-cpu
 langchain-nomic
 groq
 selenium
+langchain_community
+langchain_groq
