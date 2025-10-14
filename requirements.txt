@@ -8,4 +8,6 @@ langchain
 openai
 tiktoken
 faiss-cpu
+langchain-nomic
+groq
 selenium
