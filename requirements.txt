@@ -13,3 +13,4 @@ groq
 selenium
 langchain_community
 langchain_groq
+langchain_text_splitters
