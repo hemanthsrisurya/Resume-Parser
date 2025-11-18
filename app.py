@@ -10,7 +10,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_nomic import NomicEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
-from langchain.chains.question_answering import load_qa_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -92,7 +93,7 @@ class resume_analyzer:
         # read pdf and it returns memory address
         pdf_reader = PdfReader(pdf)
 
-        # extrat text from each page separately
+        # extract text from each page separately
         text = ""
         for page in pdf_reader.pages:
             text += page.extract_text()
@@ -105,42 +106,6 @@ class resume_analyzer:
 
         chunks = text_splitter.split_text(text=text)
         return chunks
-
-
-    def openai(groq_api_key, nomic_api_key, chunks, analyze):
-
-        # Set API keys in environment for Nomic (it reads from env automatically)
-        os.environ['NOMIC_API_KEY'] = nomic_api_key
-        os.environ['GROQ_API_KEY'] = groq_api_key
-
-        # Using Nomic service for embedding
-        embeddings = NomicEmbeddings(
-            model="nomic-embed-text-v1.5",
-            inference_mode="remote"
-        )
-
-        # Facebook AI Similarity Serach library help us to convert text data to numerical vector
-        vectorstores = FAISS.from_texts(chunks, embedding=embeddings)
-
-        # compares the query and chunks, enabling the selection of the top 'K' most similar chunks based on their similarity scores.
-        docs = vectorstores.similarity_search(query=analyze, k=3)
-
-        # creates a ChatGroq object for inference with Llama 4 Scout
-        llm = ChatGroq(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            temperature=0.6,
-            max_tokens=1024,
-            timeout=None,
-            max_retries=2,
-            streaming=True,
-            api_key=groq_api_key
-        )
-
-        # question-answering (QA) pipeline, making use of the load_qa_chain function
-        chain = load_qa_chain(llm=llm, chain_type='stuff')
-
-        response = chain.run(input_documents=docs, question=analyze)
-        return response
 
 
     def create_vectorstore(nomic_api_key, chunks):
@@ -159,15 +124,15 @@ class resume_analyzer:
         return vectorstore
 
 
-    def query_llm(groq_api_key, vectorstore, analyze):
-        """Query the LLM using existing vector store from session state"""
+    def query_llm(groq_api_key, vectorstore, question):
+        """Query the LLM using existing vector store from session state - Modern LangChain approach"""
         # Set API key in environment
         os.environ['GROQ_API_KEY'] = groq_api_key
 
         # Get relevant documents from vector store
-        docs = vectorstore.similarity_search(query=analyze, k=3)
+        docs = vectorstore.similarity_search(query=question, k=3)
 
-        # creates a ChatGroq object for inference with Llama 4 Scout
+        # Create a ChatGroq object for inference with Llama 4 Scout
         llm = ChatGroq(
             model="meta-llama/llama-4-scout-17b-16e-instruct",
             temperature=0.6,
@@ -178,16 +143,23 @@ class resume_analyzer:
             api_key=groq_api_key
         )
 
-        # question-answering (QA) pipeline
-        chain = load_qa_chain(llm=llm, chain_type='stuff')
+        # Create prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a helpful assistant that analyzes resumes. Use the following context to answer the question."),
+            ("human", "Context: {context}\n\nQuestion: {input}")
+        ])
 
-        response = chain.run(input_documents=docs, question=analyze)
+        # Create the chain using the modern approach
+        chain = create_stuff_documents_chain(llm, prompt)
+
+        # Invoke the chain with documents and question
+        response = chain.invoke({"context": docs, "input": question})
         return response
 
 
     def summary_prompt(query_with_chunks):
 
-        query = f''' need to detailed summarization of below resume and finally conclude them
+        query = f'''need to detailed summarization of below resume and finally conclude them
 
                     """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
                     {query_with_chunks}
@@ -375,7 +347,7 @@ class resume_analyzer:
 
     def job_title_prompt(query_with_chunks):
 
-        query = f''' what are the job roles i apply to likedin based on below?
+        query = f'''what are the job roles i apply to linkedin based on below?
                     
                     """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
                     {query_with_chunks}
@@ -427,9 +399,11 @@ class linkedin_scraper:
     def webdriver_setup():
             
         options = webdriver.ChromeOptions()
-        options.add_argument('--headless')
+        options.add_argument('--headless=new')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
 
         driver = webdriver.Chrome(options=options)
         driver.maximize_window()
@@ -508,7 +482,7 @@ class linkedin_scraper:
             except:
                 pass
 
-            # Scoll down the Page to End
+            # Scroll down the Page to End
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             driver.implicitly_wait(2)
 
@@ -637,7 +611,7 @@ class linkedin_scraper:
                 st.write(f"Location     : {df_final.iloc[i,2]}")
                 st.write(f"Website URL  : {df_final.iloc[i,3]}")
 
-                with st.expander(label='Job Desription'):
+                with st.expander(label='Job Description'):
                     st.write(df_final.iloc[i, 4])
                 add_vertical_space(3)
         
@@ -674,8 +648,8 @@ class linkedin_scraper:
                         # Scraping the Company Name, Location, Job Title and URL Data
                         df = linkedin_scraper.scrap_company_data(driver, job_title_input, job_location)
 
-                        # Scraping the Job Descriptin Data
-                        df_final = linkedin_scraper. scrap_job_description(driver, df, job_count)
+                        # Scraping the Job Description Data
+                        df_final = linkedin_scraper.scrap_job_description(driver, df, job_count)
                     
                     # Display the Data in User Interface
                     linkedin_scraper.display_data_userinterface(df_final)
@@ -758,6 +732,3 @@ elif option == 'Job Titles':
 elif option == 'Linkedin Jobs':
     
     linkedin_scraper.main()
-
-
-
